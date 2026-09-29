@@ -8,7 +8,7 @@ Uniamérica Descomplica · Prof. Gildomiro Bairros
 |---|---|
 | Gabriel Murbak | @BielMurbak |
 | Rafael Scarabelot | @RafaelScarabelot |
-| _(a preencher)_ | |
+| Gabriel Wegher | @weghergabriel
 
 ## Aplicação
 
