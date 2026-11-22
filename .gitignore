@@ -1,0 +1,23 @@
+# Terraform: estado, cache de providers e variáveis reais nunca vão para o Git
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+crash.*.log
+*.tfplan
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Chaves e certificados
+*.pem
+*.key
+id_*
+!*.pub.example
+
+# Variáveis de ambiente locais
+.env
+.env.*

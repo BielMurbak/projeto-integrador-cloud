@@ -1,0 +1,156 @@
+# trivy config infra/ (versão entregue) - 2026-11-21 17:59
+# Version: 0.76.2
+
+Report Summary
+
+┌─────────────┬───────────┬───────────────────┐
+│   Target    │   Type    │ Misconfigurations │
+├─────────────┼───────────┼───────────────────┤
+│ .           │ terraform │         0         │
+├─────────────┼───────────┼───────────────────┤
+│ backup.tf   │ terraform │         2         │
+├─────────────┼───────────┼───────────────────┤
+│ security.tf │ terraform │         4         │
+└─────────────┴───────────┴───────────────────┘
+Legend:
+- '-': Not scanned
+- '0': Clean (no security findings detected)
+
+
+backup.tf (terraform)
+=====================
+Tests: 2 (SUCCESSES: 0, FAILURES: 2)
+Failures: 2 (LOW: 1, MEDIUM: 0, HIGH: 1, CRITICAL: 0)
+
+AWS-0089 (LOW): Bucket has logging disabled
+════════════════════════════════════════
+Ensures S3 bucket logging is enabled for S3 buckets
+
+See https://avd.aquasec.com/misconfig/aws-0089
+────────────────────────────────────────
+ backup.tf:7-15
+────────────────────────────────────────
+   7 ┌ resource "aws_s3_bucket" "backup" {
+   8 │   bucket = "${var.group}-backup-${data.aws_caller_identity.current.account_id}"
+   9 │ 
+  10 │   # Permite que o terraform destroy apague o bucket mesmo com cópias dentro
+  11 │   # (seção 11 do enunciado: não podem restar buckets após a apresentação)
+  12 │   force_destroy = true
+  13 │ 
+  14 │   tags = { Name = "backup-mecanica" }
+  15 └ }
+────────────────────────────────────────
+
+
+AWS-0132 (HIGH): Bucket does not encrypt data with a customer managed key.
+════════════════════════════════════════
+Encryption using AWS keys provides protection for your S3 buckets. To gain greater control over encryption, such as key rotation, access policies, and auditability, use customer managed keys (CMKs) with SSE-KMS.
+Note that SSE-KMS is not supported for S3 server access logging destination buckets; in such cases, use SSE-S3 instead.
+
+
+See https://avd.aquasec.com/misconfig/aws-0132
+────────────────────────────────────────
+ backup.tf:33-41
+────────────────────────────────────────
+  33 ┌ resource "aws_s3_bucket_server_side_encryption_configuration" "backup" {
+  34 │   bucket = aws_s3_bucket.backup.id
+  35 │   rule {
+  36 │     apply_server_side_encryption_by_default {
+  37 │       sse_algorithm = "AES256"
+  38 │     }
+  39 │     bucket_key_enabled = true
+  40 │   }
+  41 └ }
+────────────────────────────────────────
+
+
+
+security.tf (terraform)
+=======================
+Tests: 4 (SUCCESSES: 0, FAILURES: 4)
+Failures: 4 (LOW: 0, MEDIUM: 0, HIGH: 0, CRITICAL: 4)
+
+AWS-0104 (CRITICAL): Security group rule allows unrestricted egress to any IP address.
+════════════════════════════════════════
+Opening up ports to connect out to the public internet is generally to be avoided. You should restrict access to IP addresses or ranges that are explicitly required where possible.
+
+
+See https://avd.aquasec.com/misconfig/aws-0104
+────────────────────────────────────────
+ security.tf:155
+   via security.tf:149-156 (aws_vpc_security_group_egress_rule.app_http_out)
+────────────────────────────────────────
+ 149   resource "aws_vpc_security_group_egress_rule" "app_http_out" {
+ 150     security_group_id = aws_security_group.app.id
+ 151     description       = "Repositorios apt do Ubuntu (HTTP) via NAT"
+ 152     ip_protocol       = "tcp"
+ 153     from_port         = 80
+ 154     to_port           = 80
+ 155 [   cidr_ipv4         = "0.0.0.0/0"
+ 156   }
+────────────────────────────────────────
+
+
+AWS-0104 (CRITICAL): Security group rule allows unrestricted egress to any IP address.
+════════════════════════════════════════
+Opening up ports to connect out to the public internet is generally to be avoided. You should restrict access to IP addresses or ranges that are explicitly required where possible.
+
+
+See https://avd.aquasec.com/misconfig/aws-0104
+────────────────────────────────────────
+ security.tf:146
+   via security.tf:140-147 (aws_vpc_security_group_egress_rule.app_https_out)
+────────────────────────────────────────
+ 140   resource "aws_vpc_security_group_egress_rule" "app_https_out" {
+ 141     security_group_id = aws_security_group.app.id
+ 142     description       = "Imagens Docker, SSM e S3 (HTTPS), via NAT ou endpoint"
+ 143     ip_protocol       = "tcp"
+ 144     from_port         = 443
+ 145     to_port           = 443
+ 146 [   cidr_ipv4         = "0.0.0.0/0"
+ 147   }
+────────────────────────────────────────
+
+
+AWS-0104 (CRITICAL): Security group rule allows unrestricted egress to any IP address.
+════════════════════════════════════════
+Opening up ports to connect out to the public internet is generally to be avoided. You should restrict access to IP addresses or ranges that are explicitly required where possible.
+
+
+See https://avd.aquasec.com/misconfig/aws-0104
+────────────────────────────────────────
+ security.tf:116
+   via security.tf:110-117 (aws_vpc_security_group_egress_rule.web_http_out)
+────────────────────────────────────────
+ 110   resource "aws_vpc_security_group_egress_rule" "web_http_out" {
+ 111     security_group_id = aws_security_group.web.id
+ 112     description       = "Repositorios apt do Ubuntu (HTTP)"
+ 113     ip_protocol       = "tcp"
+ 114     from_port         = 80
+ 115     to_port           = 80
+ 116 [   cidr_ipv4         = "0.0.0.0/0"
+ 117   }
+────────────────────────────────────────
+
+
+AWS-0104 (CRITICAL): Security group rule allows unrestricted egress to any IP address.
+════════════════════════════════════════
+Opening up ports to connect out to the public internet is generally to be avoided. You should restrict access to IP addresses or ranges that are explicitly required where possible.
+
+
+See https://avd.aquasec.com/misconfig/aws-0104
+────────────────────────────────────────
+ security.tf:107
+   via security.tf:101-108 (aws_vpc_security_group_egress_rule.web_https_out)
+────────────────────────────────────────
+ 101   resource "aws_vpc_security_group_egress_rule" "web_https_out" {
+ 102     security_group_id = aws_security_group.web.id
+ 103     description       = "Pacotes e imagens Docker (HTTPS)"
+ 104     ip_protocol       = "tcp"
+ 105     from_port         = 443
+ 106     to_port           = 443
+ 107 [   cidr_ipv4         = "0.0.0.0/0"
+ 108   }
+────────────────────────────────────────
+
+

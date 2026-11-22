@@ -1,0 +1,83 @@
+#cloud-config
+# vm-web: Nginx do sistema termina o HTTPS (S3) e repassa:
+#   /      -> contêiner do frontend (arquivos estáticos), só em 127.0.0.1:8081
+#   /api/  -> API na vm-app (${app_private_ip}:8080)
+# A porta 80 só redireciona para HTTPS.
+ssh_pwauth: false
+disable_root: true
+
+package_update: true
+packages:
+  - nginx
+  - docker.io
+  - openssl
+
+write_files:
+  # Espelho do Ubuntu às vezes falha por alguns segundos no boot: sem isto o
+  # apt desiste na primeira falha e a VM sobe sem Docker. A VPC não tem IPv6.
+  - path: /etc/apt/apt.conf.d/80-retries
+    permissions: "0644"
+    content: |
+      Acquire::Retries "10";
+      Acquire::ForceIPv4 "true";
+  - path: /etc/ssh/sshd_config.d/00-hardening.conf
+    permissions: "0644"
+    content: |
+      ${indent(6, ssh_hardening)}
+
+  - path: /etc/nginx/sites-available/mecanica
+    permissions: "0644"
+    content: |
+      server_tokens off;
+
+      server {
+          listen 80 default_server;
+          server_name _;
+          return 301 https://$host$request_uri;
+      }
+
+      server {
+          # nginx 1.24 (Ubuntu 24.04): http2 vai no listen, a diretiva "http2 on" só existe a partir da 1.25
+          listen 443 ssl http2 default_server;
+          server_name _;
+
+          ssl_certificate     /etc/nginx/tls/mecanica.crt;
+          ssl_certificate_key /etc/nginx/tls/mecanica.key;
+          ssl_protocols       TLSv1.2 TLSv1.3;
+          ssl_prefer_server_ciphers on;
+
+          add_header X-Content-Type-Options nosniff always;
+          add_header X-Frame-Options DENY always;
+          add_header Referrer-Policy no-referrer always;
+
+          location /api/ {
+              proxy_pass http://${app_private_ip}:8080;
+              proxy_set_header Host $http_host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto https;
+          }
+
+          location = /health {
+              default_type text/plain;
+              return 200 "ok";
+          }
+
+          location / {
+              proxy_pass http://127.0.0.1:8081;
+              proxy_set_header Host $http_host;
+          }
+      }
+
+runcmd:
+  - systemctl restart ssh
+  # Certificado autoassinado com o Elastic IP da web no SAN
+  - mkdir -p /etc/nginx/tls
+  - openssl req -x509 -newkey rsa:2048 -nodes -days 30 -keyout /etc/nginx/tls/mecanica.key -out /etc/nginx/tls/mecanica.crt -subj "/CN=${public_ip}/O=Projeto Integrador Mecanica" -addext "subjectAltName=IP:${public_ip}"
+  - chmod 600 /etc/nginx/tls/mecanica.key
+  - rm -f /etc/nginx/sites-enabled/default
+  - ln -sf /etc/nginx/sites-available/mecanica /etc/nginx/sites-enabled/mecanica
+  - systemctl enable --now docker
+  - docker run -d --name frontend --restart unless-stopped -p 127.0.0.1:8081:80 ${frontend_image}
+  - nginx -t
+  - systemctl reload nginx

@@ -1,0 +1,14 @@
+#cloud-config
+# vm-bastion: só encaminha SSH. Sem saída para a internet (sg-bastion só tem
+# saída 22 para as outras VMs), então nenhum pacote é instalado aqui.
+ssh_pwauth: false
+disable_root: true
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/00-hardening.conf
+    permissions: "0644"
+    content: |
+      ${indent(6, ssh_hardening)}
+
+runcmd:
+  - systemctl restart ssh

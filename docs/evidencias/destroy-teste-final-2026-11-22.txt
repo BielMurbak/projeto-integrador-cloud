@@ -1,0 +1,9 @@
+# Conferência após o terraform destroy — 2026-11-22 12:42
+instancias (pending/running/stopping/stopped): 0
+NAT gateways (pending/available/deleting): 0
+Elastic IPs: 0
+volumes EBS: 0
+snapshots proprios: 0
+buckets S3: 0
+VPCs do projeto: 0
+parametros SSM: 0

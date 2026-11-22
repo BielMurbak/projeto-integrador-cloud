@@ -1,0 +1,27 @@
+# Copie para terraform.tfvars (ignorado pelo Git) e preencha.
+# As senhas NÃO ficam aqui: exporte antes do apply
+#   export TF_VAR_db_password='...'
+#   export TF_VAR_admin_password='...'
+
+owner = "gabriel"
+
+# IP público /32 de cada integrante (descubra com: curl -s https://checkip.amazonaws.com)
+ssh_allowed_cidrs = [
+  "203.0.113.10/32", # Gabriel Murbak
+  "203.0.113.20/32", # Rafael Scarabelot
+  "203.0.113.30/32", # Gabriel Wegher
+]
+
+# Conteúdo de ~/.ssh/chave-grupo.pub
+ssh_public_key = "ssh-ed25519 AAAA... chave-grupo"
+
+# Valores abaixo já têm padrão (Entrega 1); altere só se precisar
+# region              = "us-east-1"
+# availability_zone   = "us-east-1a"
+# vpc_cidr            = "10.20.0.0/16"
+# public_subnet_cidr  = "10.20.1.0/24"
+# private_subnet_cidr = "10.20.10.0/24"
+# bastion_instance_type = "t3.micro"
+# web_instance_type     = "t3.micro"
+# app_instance_type     = "t3.small"
+# backup_retention_days = 1

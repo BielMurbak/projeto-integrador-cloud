@@ -1,0 +1,226 @@
+# Teste final da Entrega 2 — 2026-11-22 12:36
+# Ambiente criado com: terraform apply (49 recursos). IPs mudam a cada apply.
+# Executado de: 177.73.100.106 (único /32 autorizado no SSH)
+# Observação: no primeiro apply o cloud-init da vm-app terminou com 'status: error' porque o espelho do
+# Ubuntu (us-east-1.ec2.archive.ubuntu.com) recusou conexões por alguns segundos durante o download do
+# Docker. Correção: /etc/apt/apt.conf.d/80-retries (10 tentativas, só IPv4) nos cloud-init da vm-app e da
+# vm-web; o apply seguinte recriou só essas duas VMs (3 adicionados, 3 destruídos) e a instalação terminou sem erro.
+
+================================================================
+## Instalação (cloud-init)
+================================================================
+$ ssh -J ubuntu@23.20.24.73 ubuntu@10.20.10.10 'cloud-init status'
+ip-10-20-10-10
+status: done
+$ ssh -J ubuntu@23.20.24.73 ubuntu@10.20.1.20 'cloud-init status'
+ip-10-20-1-20
+status: done
+
+================================================================
+## D1 — estado consistente
+================================================================
+$ terraform plan -detailed-exitcode
+
+Terraform has compared your real infrastructure against your configuration
+and found no differences, so no changes are needed.
+exit code: 0 (0 = nada a alterar)
+$ terraform output
+app_url = "https://54.235.163.231"
+backup_bucket = "mecanica-backup-374617280813"
+bastion_public_ip = "23.20.24.73"
+nat_public_ip = "18.213.104.247"
+private_ips = {
+  "app" = "10.20.10.10"
+  "bastion" = "10.20.1.10"
+  "web" = "10.20.1.20"
+}
+ssh_app_via_bastion = "ssh -J ubuntu@23.20.24.73 ubuntu@10.20.10.10"
+ssh_bastion = "ssh ubuntu@23.20.24.73"
+ssh_web_via_bastion = "ssh -J ubuntu@23.20.24.73 ubuntu@10.20.1.20"
+web_public_ip = "54.235.163.231"
+
+================================================================
+## D2 — aplicação por HTTPS (S3)
+================================================================
+$ curl -sI http://54.235.163.231/ | head -3
+HTTP/1.1 301 Moved Permanently
+Server: nginx
+Date: Sun, 22 Nov 2026 15:37:26 GMT
+$ curl -sk https://54.235.163.231/ | grep -o '<title>.*</title>'
+<title>Gestão de Mecânica</title>
+$ openssl s_client -connect 54.235.163.231:443 (protocolo, cifra, certificado)
+subject=CN=54.235.163.231, O=Projeto Integrador Mecanica
+New, TLSv1.3, Cipher is TLS_AES_256_GCM_SHA384
+    Protocol  : TLSv1.3
+    Cipher    : TLS_AES_256_GCM_SHA384
+    Protocol  : TLSv1.3
+    Cipher    : TLS_AES_256_GCM_SHA384
+X509v3 Subject Alternative Name: 
+    IP Address:54.235.163.231
+$ curl -sk -o /dev/null -w '%{http_code}' https://54.235.163.231/api/mecanicos   # sem login
+401
+$ POST https://54.235.163.231/api/auth/login (admin, senha de TF_VAR_admin_password)
+200
+$ POST https://54.235.163.231/api/mecanicos  (cadastro — funcionalidade verificável)
+{"id":1,"nome":"Mecanico Demonstracao","especialidade":"Freios","telefone":"45999990000","email":"demo@oficina.com","ativo":true}
+HTTP 201
+$ GET https://54.235.163.231/api/mecanicos
+[{"id":1,"nome":"Mecanico Demonstracao","especialidade":"Freios","telefone":"45999990000","email":"demo@oficina.com","ativo":true}]
+
+================================================================
+## D3 — acesso administrativo e S1
+================================================================
+$ ssh ubuntu@23.20.24.73 'hostname'
+ip-10-20-1-10
+ens5             UP             10.20.1.10/24 metric 100 
+$ ssh -J ubuntu@23.20.24.73 ubuntu@10.20.10.10 'hostname'
+ip-10-20-10-10
+$ ssh -o PubkeyAuthentication=no -o PreferredAuthentications=password ubuntu@23.20.24.73
+ubuntu@23.20.24.73: Permission denied (publickey).
+$ ssh -o User=root ... root@23.20.24.73
+root@23.20.24.73: Permission denied (publickey).
+$ sshd -T (configuração efetiva)
+maxauthtries 3
+permitrootlogin no
+passwordauthentication no
+kbdinteractiveauthentication no
+
+================================================================
+## D4 — NAT e isolamento
+================================================================
+$ terraform output -raw nat_public_ip
+18.213.104.247
+$ (na vm-app) curl -s https://ifconfig.me
+18.213.104.247
+$ (na vm-app) ip -4 -br addr
+lo               UNKNOWN        127.0.0.1/8 
+ens5             UP             10.20.10.10/24 metric 100 
+docker0          DOWN           172.17.0.1/16 
+br-30da679b50ac  UP             172.18.0.1/16 
+$ aws ec2 describe-instances (IP público da vm-app)
+----------------------------
+|     DescribeInstances    |
++--------------+-----------+
+|    privado   |  publico  |
++--------------+-----------+
+|  10.20.10.10 |  None     |
++--------------+-----------+
+$ regras de entrada SSH do sg-bastion
+-----------------------------------------------------------------
+|                  DescribeSecurityGroupRules                   |
++--------------------+--------+--------+------------------------+
+|        cidr        | porta  | saida  |          sg            |
++--------------------+--------+--------+------------------------+
+|  177.73.100.106/32 |  22    |  False |  None                  |
+|  None              |  22    |  True  |  sg-04c4da65148aafde1  |
+|  None              |  22    |  True  |  sg-0c94f15393417c956  |
++--------------------+--------+--------+------------------------+
+$ ssh de outro IP: o SG descarta (timeout). Verificado no teste de 21/11 (teste-final-2026-11-21.txt): antes de atualizar ssh_allowed_cidrs, a conexão do novo IP do integrante deu 'Connection timed out'.
+
+================================================================
+## D5 — segredos fora do código (S4) e análise (S7)
+================================================================
+$ grep -rn 'password' infra/*.tf  (só variáveis e referências, nenhum valor)
+  ./compute.tf:104:    db_password_param    = aws_ssm_parameter.db_password.name
+  ./compute.tf:105:    admin_password_param = aws_ssm_parameter.admin_password.name
+  ./security.tf:163:resource "aws_ssm_parameter" "db_password" {
+  ./security.tf:164:  name        = "/${var.project}/db_password"
+  ./security.tf:167:  value       = var.db_password
+  ./security.tf:170:resource "aws_ssm_parameter" "admin_password" {
+  ./security.tf:171:  name        = "/${var.project}/admin_password"
+  ./security.tf:174:  value       = var.admin_password
+  ./security.tf:204:    resources = [aws_ssm_parameter.db_password.arn, aws_ssm_parameter.admin_password.arn]
+  ./variables.tf:161:variable "db_password" {
+  ./variables.tf:163:  description = "Senha do PostgreSQL. Informar por TF_VAR_db_password; vai para o SSM Parameter Store como SecureString."
+  ./variables.tf:167:    condition     = length(var.db_password) >= 12
+  ./variables.tf:172:variable "admin_password" {
+  ./variables.tf:174:  description = "Senha do usuário admin da aplicação. Informar por TF_VAR_admin_password; vai para o SSM Parameter Store."
+  ./variables.tf:178:    condition     = length(var.admin_password) >= 8
+$ user_data da vm-app contém senha?
+  não: user_data decodificado por completo (122 linhas); nenhuma das duas senhas aparece, só os nomes dos parâmetros do SSM
+81:      get() { $AWS ssm get-parameter --region us-east-1 --with-decryption --name "$1" --query Parameter.Value --output text; }
+82:      DB_PASS=$(get /projeto-integrador-cloud/db_password)
+83:      ADMIN_PASS=$(get /projeto-integrador-cloud/admin_password)
+$ aws ssm describe-parameters
+--------------------------------------------------------------
+|                     DescribeParameters                     |
++-------------------------------------------+----------------+
+|                   nome                    |     tipo       |
++-------------------------------------------+----------------+
+|  /projeto-integrador-cloud/admin_password |  SecureString  |
+|  /projeto-integrador-cloud/db_password    |  SecureString  |
++-------------------------------------------+----------------+
+$ (na vm-app) ls -l /opt/mecanica/.env
+-rw------- 1 root root 131 Nov 22 15:26 /opt/mecanica/.env
+$ trivy config infra/ (resumo; relatório completo em docs/evidencias/trivy-infra.txt)
+Failures: 2 (LOW: 1, MEDIUM: 0, HIGH: 1, CRITICAL: 0)
+AWS-0089 (LOW): Bucket has logging disabled
+AWS-0132 (HIGH): Bucket does not encrypt data with a customer managed key.
+Failures: 4 (LOW: 0, MEDIUM: 0, HIGH: 0, CRITICAL: 4)
+AWS-0104 (CRITICAL): Security group rule allows unrestricted egress to any IP address.
+AWS-0104 (CRITICAL): Security group rule allows unrestricted egress to any IP address.
+AWS-0104 (CRITICAL): Security group rule allows unrestricted egress to any IP address.
+AWS-0104 (CRITICAL): Security group rule allows unrestricted egress to any IP address.
+
+================================================================
+## S6 — criptografia em repouso
+================================================================
+$ aws ec2 describe-volumes (discos das VMs)
+-------------------------------------------------
+|                DescribeVolumes                |
++----------------+-----+----------------+-------+
+|  criptografado | gb  |     nome       | tipo  |
++----------------+-----+----------------+-------+
+|  True          |  8  |  disk-bastion  |  gp3  |
+|  True          |  20 |  disk-app      |  gp3  |
+|  True          |  8  |  disk-web      |  gp3  |
++----------------+-----+----------------+-------+
+$ aws s3api get-bucket-encryption --bucket mecanica-backup-374617280813
+{
+    "ApplyServerSideEncryptionByDefault": {
+        "SSEAlgorithm": "AES256"
+    },
+    "BucketKeyEnabled": true,
+    "BlockedEncryptionTypes": {
+        "EncryptionType": [
+            "SSE-C"
+        ]
+    }
+}
+
+================================================================
+## D6 — backup (política mínima)
+================================================================
+$ (na vm-app) sudo /usr/local/bin/backup-db.sh && tail /var/log/backup-db.log
+# as duas primeiras linhas são automáticas (cron @reboot e runcmd, ~10 min após o boot); a terceira é a execução manual
+2026-11-22T15:35:36Z backup gravado em s3://mecanica-backup-374617280813/diario/mecanica-2026-11-22T153533Z.sql.gz
+2026-11-22T15:37:34Z backup gravado em s3://mecanica-backup-374617280813/diario/mecanica-2026-11-22T153732Z.sql.gz
+2026-11-22T15:39:10Z backup gravado em s3://mecanica-backup-374617280813/diario/mecanica-2026-11-22T153909Z.sql.gz
+$ aws s3 ls s3://mecanica-backup-374617280813/diario/
+2026-11-22 12:35:36       1342 mecanica-2026-11-22T153533Z.sql.gz
+2026-11-22 12:37:34       1343 mecanica-2026-11-22T153732Z.sql.gz
+2026-11-22 12:39:11       1388 mecanica-2026-11-22T153909Z.sql.gz
+$ aws s3api head-object --bucket mecanica-backup-374617280813 --key diario/mecanica-2026-11-22T153909Z.sql.gz
+{
+    "tamanho": 1388,
+    "criptografia": "AES256",
+    "expiracao": "expiry-date=\"Tue, 24 Nov 2026 00:00:00 GMT\", rule-id=\"son-diario\""
+}
+$ aws s3api get-bucket-lifecycle-configuration --bucket mecanica-backup-374617280813
+---------------------------------------------------------------------------
+|                     GetBucketLifecycleConfiguration                     |
++------+--------------------------------+-------------+-------------------+
+| dias |              id                |   prefixo   |  versoes_antigas  |
++------+--------------------------------+-------------+-------------------+
+|  1   |  son-diario                    |  diario/    |  1                |
+|  1   |  flow-logs                     |  flow-logs/ |  1                |
+|  None|  limpa-marcadores-de-exclusao  |             |  None             |
++------+--------------------------------+-------------+-------------------+
+$ (na vm-app) a role tenta listar, ler e apagar backups (S5)
+aws: [ERROR]: An error occurred (AccessDenied) when calling the ListObjectsV2 operation: User: arn:aws:sts::374617280813:assumed-role/mecanica-vm-app-role/i-098e338a3c197e4c8 is not authorized to perform: s3:ListBucket on resource: "arn:aws:s3:::mecanica-backup-374617280813" because no identity-based policy allows the s3:ListBucket action
+fatal error: An error occurred (403) when calling the HeadObject operation: Forbidden
+delete failed: s3://mecanica-backup-374617280813/diario/mecanica-2026-11-22T153909Z.sql.gz An error occurred (AccessDenied) when calling the DeleteObject operation: User: arn:aws:sts::374617280813:assumed-role/mecanica-vm-app-role/i-098e338a3c197e4c8 is not authorized to perform: s3:DeleteObject on resource: "arn:aws:s3:::mecanica-backup-374617280813/diario/mecanica-2026-11-22T153909Z.sql.gz" because no identity-based policy allows the s3:DeleteObject action
+$ (na vm-app) chave de acesso gravada na VM?
+(nenhum arquivo credentials encontrado se a lista acima estiver vazia)
+
+# fim

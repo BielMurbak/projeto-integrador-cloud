@@ -1,0 +1,19 @@
+item;configuracao;quantidade;preco_unitario_USD;unidade;horas_ou_qtd_mes;mensal_USD
+ALB (hora);1 ALB;1;0.0225;hora;730;16.43
+ALB (LCU);1 LCU medio;1;0.008;LCU-hora;730;5.84
+asg-web instancias;t3.micro;2;0.0104;hora;730;15.18
+asg-web discos;gp3 8 GB;2;0.08;GB-mes;8;1.28
+asg-api instancias;t3.small;2;0.0208;hora;730;30.37
+asg-api discos;gp3 8 GB;2;0.08;GB-mes;8;1.28
+bastion instancia;t3.micro;1;0.0104;hora;730;7.59
+bastion disco;gp3 8 GB;1;0.08;GB-mes;8;0.64
+NAT Gateway (hora);1 por zona;2;0.045;hora;730;65.70
+NAT Gateway (dados);5 GB processados;1;0.045;GB;5;0.23
+IPv4 publico;2 ALB + 2 NAT + 1 bastion;5;0.005;hora;730;18.25
+RDS instancia;db.t4g.micro Multi-AZ PostgreSQL;1;0.032;hora;730;23.36
+RDS armazenamento;gp3 20 GB Multi-AZ;1;0.23;GB-mes;20;4.60
+Route 53;zona hospedada;1;0.50;zona-mes;1;0.50
+ACM;certificado publico;1;0;-;-;0.00
+TOTAL proposta HA;;;;;;191.25
+TOTAL Entrega 1 cenario A;;;;;;77.27
+Variacao;;;;;;+147%

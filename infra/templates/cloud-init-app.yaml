@@ -1,0 +1,115 @@
+#cloud-config
+# vm-app: API Spring Boot + PostgreSQL em Docker, sem IP público.
+# Sai para a internet pelo NAT (pacotes e imagens) e grava backups no S3
+# pelo endpoint de gateway, usando a role da instância (S5).
+ssh_pwauth: false
+disable_root: true
+
+package_update: true
+packages:
+  - docker.io
+  - docker-compose-v2
+  - cron
+
+write_files:
+  # Espelho do Ubuntu às vezes falha por alguns segundos no boot: sem isto o
+  # apt desiste na primeira falha e a VM sobe sem Docker. A VPC não tem IPv6.
+  - path: /etc/apt/apt.conf.d/80-retries
+    permissions: "0644"
+    content: |
+      Acquire::Retries "10";
+      Acquire::ForceIPv4 "true";
+  - path: /etc/ssh/sshd_config.d/00-hardening.conf
+    permissions: "0644"
+    content: |
+      ${indent(6, ssh_hardening)}
+
+  # Compose da aplicação. O PostgreSQL não publica porta nenhuma: só a API
+  # (rede interna do Docker) fala com ele. A API publica a 8080, que o
+  # sg-app só libera para o sg-web.
+  - path: /opt/mecanica/docker-compose.yml
+    permissions: "0644"
+    content: |
+      name: mecanica
+      services:
+        db:
+          image: postgres:16-alpine
+          restart: unless-stopped
+          env_file: /opt/mecanica/.env
+          environment:
+            POSTGRES_DB: mecanica
+            POSTGRES_USER: mecanica
+          volumes:
+            - db_data:/var/lib/postgresql/data
+          healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U mecanica -d mecanica"]
+            interval: 5s
+            timeout: 5s
+            retries: 20
+        app:
+          image: ${backend_image}
+          restart: unless-stopped
+          depends_on:
+            db:
+              condition: service_healthy
+          env_file: /opt/mecanica/.env
+          environment:
+            SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/mecanica
+            SPRING_DATASOURCE_USERNAME: mecanica
+            APP_ADMIN_USERNAME: admin
+            CORS_ALLOWED_ORIGINS: ${cors_origin}
+          ports:
+            - "8080:8080"
+      volumes:
+        db_data:
+
+  # S4: busca as senhas no SSM Parameter Store com a role da instância e
+  # grava um .env legível só pelo root. Nada de senha no user_data.
+  - path: /opt/mecanica/start.sh
+    permissions: "0750"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      AWS=/snap/bin/aws
+      get() { $AWS ssm get-parameter --region ${region} --with-decryption --name "$1" --query Parameter.Value --output text; }
+      DB_PASS=$(get ${db_password_param})
+      ADMIN_PASS=$(get ${admin_password_param})
+      umask 077
+      cat > /opt/mecanica/.env <<EOF
+      POSTGRES_PASSWORD=$DB_PASS
+      SPRING_DATASOURCE_PASSWORD=$DB_PASS
+      APP_ADMIN_PASSWORD=$ADMIN_PASS
+      EOF
+      docker compose -f /opt/mecanica/docker-compose.yml up -d
+
+  # Parte D: dump lógico do banco direto para o bucket, prefixo diario/
+  - path: /usr/local/bin/backup-db.sh
+    permissions: "0750"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      TS=$(date -u +%Y-%m-%dT%H%M%SZ)
+      DEST="s3://${backup_bucket}/diario/mecanica-$TS.sql.gz"
+      docker compose -f /opt/mecanica/docker-compose.yml exec -T db \
+        pg_dump -U mecanica -d mecanica --clean --if-exists \
+        | gzip \
+        | /snap/bin/aws s3 cp - "$DEST" --region ${region} --sse AES256 --only-show-errors
+      echo "$(date -u +%FT%TZ) backup gravado em $DEST" >> /var/log/backup-db.log
+
+  # Agenda diária + uma cópia 10 minutos após o boot, para sempre existir
+  # ao menos uma cópia no bucket durante a apresentação
+  - path: /etc/cron.d/backup-db
+    permissions: "0644"
+    content: |
+      SHELL=/bin/bash
+      PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin
+      ${backup_cron} root /usr/local/bin/backup-db.sh >> /var/log/backup-db.log 2>&1
+      @reboot root sleep 600 && /usr/local/bin/backup-db.sh >> /var/log/backup-db.log 2>&1
+
+runcmd:
+  - systemctl restart ssh
+  - snap install aws-cli --classic
+  - systemctl enable --now docker
+  - usermod -aG docker ubuntu
+  - /opt/mecanica/start.sh
+  - [bash, -c, "(sleep 600 && /usr/local/bin/backup-db.sh >> /var/log/backup-db.log 2>&1) &"]
